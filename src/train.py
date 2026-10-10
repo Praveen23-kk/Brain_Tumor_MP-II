@@ -187,7 +187,7 @@ def _is_finished(run_dir):
     return cfg.exists() and json.loads(cfg.read_text()).get("finished", False)
 
 
-def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accum, device):
+def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accum, device, target_acc=None):
     """One complete training attempt with a given batch / accumulation. Returns the config dict.
     Raises torch.cuda.OutOfMemoryError if the GPU is too small for this batch (run() then retries)."""
     spec = MODELS[model_name]
@@ -206,7 +206,7 @@ def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accu
     if spec["heavy"]:
         set_backbone_trainable(model, False)
 
-    history, best_f1, best_epoch, bad_epochs = [], -1.0, 0, 0
+    history, best_f1, best_epoch, bad_epochs, stopped_by = [], -1.0, 0, 0, "max_epochs"
     torch.cuda.reset_peak_memory_stats()
     start = time.perf_counter()
     for epoch in range(1, epochs + 1):
@@ -234,6 +234,12 @@ def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accu
               f"val loss {va_loss:.4f} acc {va_acc:.4f} F1 {va_f1:.4f} | {history[-1]['seconds']}s{mark}")
         if bad_epochs >= patience:
             print(f"  early stop: no val macro-F1 gain for {patience} epochs")
+            stopped_by = "patience"
+            break
+        if target_acc is not None and va_acc >= target_acc:
+            # Target reached: stop to save time. best.pt still holds the best-macro-F1 epoch so far.
+            print(f"  target reached: val acc {va_acc:.4f} >= {target_acc}")
+            stopped_by = "target_acc"
             break
 
     config = {
@@ -243,7 +249,8 @@ def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accu
         "optimizer": "AdamW", "lr": lr, "weight_decay": WEIGHT_DECAY, "schedule": "1 warm-up epoch + cosine",
         "label_smoothing": LABEL_SMOOTHING, "train_counts": counts, "class_weights": weights,
         "freeze_epochs": FREEZE_EPOCHS if spec["heavy"] else 0,
-        "max_epochs": epochs, "patience": patience, "epochs_run": len(history),
+        "max_epochs": epochs, "patience": patience, "target_acc": target_acc, "stopped_by": stopped_by,
+        "epochs_run": len(history),
         "best_epoch": best_epoch, "best_val_macro_f1": best_f1,
         "amp_disabled_at_epoch": amp.disabled_at_epoch,
         "peak_gpu_mb": round(torch.cuda.max_memory_allocated() / 2**20, 1) if device == "cuda" else None,
@@ -254,8 +261,10 @@ def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accu
     return config
 
 
-def run(model_name, split_name, split_csv, epochs=20, patience=5, subset=None, out_root="outputs/runs"):
+def run(model_name, split_name, split_csv, epochs=20, patience=5, subset=None, out_root="outputs/runs",
+        target_acc=None):
     """Train model_name on split_csv; results in out_root/split_name/model_name/.
+    target_acc (e.g. 0.92): also stop as soon as val accuracy reaches it (saves time; None = off).
     Skips the run if it already finished. On CUDA out-of-memory: halve the batch, double the gradient
     accumulation (same effective batch) and start the run again."""
     run_dir = Path(out_root) / split_name / model_name
@@ -268,7 +277,8 @@ def run(model_name, split_name, split_csv, epochs=20, patience=5, subset=None, o
     print(f"training {split_name}/{model_name} (batch {batch}, device {device})")
     while True:
         try:
-            config = _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accum, device)
+            config = _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accum, device,
+                            target_acc)
             break
         except torch.cuda.OutOfMemoryError:
             if batch == 1:
@@ -307,3 +317,77 @@ def plot_history(run_dir, out_dir=None):
         Path(out_dir).mkdir(parents=True, exist_ok=True)
         fig.savefig(Path(out_dir) / f"curves_{run_dir.parent.name}_{run_dir.name}.png", dpi=150, bbox_inches="tight")
     return _save(fig, run_dir, "curves.png")
+
+
+# ------------------------------------------------------------------- Week 6: run reports
+def run_summary(run_dir):
+    """One-row summary of a finished run: validation scores AT THE BEST EPOCH (from history.csv)
+    plus epochs, time and peak GPU memory (from config.json)."""
+    run_dir = Path(run_dir)
+    h = pd.read_csv(run_dir / "history.csv")
+    cfg = json.loads((run_dir / "config.json").read_text())
+    best = h.loc[h["epoch"] == cfg["best_epoch"]].iloc[0]
+    return {"split": run_dir.parent.name, "model": run_dir.name,
+            "val_acc": round(float(best["val_acc"]), 4), "val_macro_f1": round(float(best["val_macro_f1"]), 4),
+            "epochs_run": cfg["epochs_run"], "best_epoch": cfg["best_epoch"],
+            "train_time_min": round(cfg["train_time_s"] / 60, 1), "peak_gpu_mb": cfg["peak_gpu_mb"]}
+
+
+def health_check(run_dir, max_gap=0.10, max_loss_rise=0.25):
+    """Warnings for a finished run (empty list = healthy).
+    NaN:          float16 had to be switched off, or the history contains NaN/Inf.
+    Overfitting:  at the best epoch train accuracy is more than max_gap above val accuracy, OR
+                  the last val loss is more than max_loss_rise (25%) above its minimum while the
+                  train loss kept falling (the model memorises training images, val gets worse)."""
+    run_dir = Path(run_dir)
+    h = pd.read_csv(run_dir / "history.csv")
+    cfg = json.loads((run_dir / "config.json").read_text())
+    warnings = []
+    if cfg.get("amp_disabled_at_epoch") is not None:
+        warnings.append(f"NaN/Inf with float16 at epoch {cfg['amp_disabled_at_epoch']} (switched to float32)")
+    numbers = h[["train_loss", "val_loss", "val_acc", "val_macro_f1"]].to_numpy(dtype=float)
+    if not np.isfinite(numbers).all():
+        warnings.append("history contains NaN/Inf values")
+    best = h.loc[h["epoch"] == cfg["best_epoch"]].iloc[0]
+    gap = best["train_acc"] - best["val_acc"]
+    if gap > max_gap:
+        warnings.append(f"overfitting: train acc - val acc = {gap:.3f} at the best epoch")
+    i_min = int(h["val_loss"].idxmin())
+    rise = h["val_loss"].iloc[-1] / h["val_loss"].iloc[i_min] - 1
+    if rise > max_loss_rise and h["train_loss"].iloc[-1] < h["train_loss"].iloc[i_min]:
+        warnings.append(f"overfitting: final val loss {100 * rise:.0f}% above its minimum (epoch "
+                        f"{int(h['epoch'].iloc[i_min])}) while train loss kept falling")
+    return warnings
+
+
+def plot_all_histories(run_dirs, out_path):
+    """All runs in ONE figure: one column per run.
+    Top row: train and val loss. Bottom row: train accuracy, val accuracy, val macro-F1.
+    Rows share their y-axis so runs can be compared; the dotted line marks the best epoch."""
+    run_dirs = [Path(d) for d in run_dirs]
+    n = len(run_dirs)
+    fig, axes = plt.subplots(2, n, figsize=(3.2 * n, 6), sharey="row", squeeze=False)
+    for j, run_dir in enumerate(run_dirs):
+        h = pd.read_csv(run_dir / "history.csv")
+        best = json.loads((run_dir / "config.json").read_text())["best_epoch"]
+        top, bottom = axes[0, j], axes[1, j]
+        top.plot(h["epoch"], h["train_loss"], "-", label="train loss")
+        top.plot(h["epoch"], h["val_loss"], "-", label="val loss")
+        bottom.plot(h["epoch"], h["train_acc"], "-", label="train acc")
+        bottom.plot(h["epoch"], h["val_acc"], "-", label="val acc")
+        bottom.plot(h["epoch"], h["val_macro_f1"], "--", label="val macro-F1")
+        top.set_title(f"{run_dir.parent.name}\n{run_dir.name}", fontsize=9)
+        top.set_ylim(0, 2.5)            # epoch-1 val loss (BatchNorm lag) can be ~7; clip so the rest is readable
+        bottom.set_ylim(0, 1.02)
+        bottom.set_xlabel("Epoch")
+        for ax in (top, bottom):
+            ax.axvline(best, color="grey", linestyle=":", linewidth=1)
+            ax.spines[["top", "right"]].set_visible(False)
+    axes[0, 0].set_ylabel("Loss (y clipped at 2.5)")
+    axes[1, 0].set_ylabel("Score")
+    axes[0, 0].legend(fontsize=8)
+    axes[1, 0].legend(fontsize=8, loc="lower right")
+    fig.suptitle("Training curves of all runs (dotted line = best val macro-F1 epoch)")
+    fig.tight_layout()
+    out_path = Path(out_path)
+    return _save(fig, out_path.parent, out_path.name)

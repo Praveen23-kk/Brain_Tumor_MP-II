@@ -177,3 +177,49 @@ Plan the training pipeline (smoke test of 1 epoch first) and train the light mod
 ### Next step
 Train efficientnet_b0 and the heavy baselines on v1/v2 clean AND original splits (same pipeline), then evaluate
 every best.pt once on its test split (accuracy, macro-F1, confusion matrix) and compare original vs clean.
+
+## Session 2026-10-10/11 (Week 6: light models on original and clean splits)
+### Done
+- `src/train.py`: `run_summary` (val scores at the best epoch + time + memory), `health_check` (NaN, overfitting:
+  train-val acc gap > 0.10 at best epoch, or final val loss > 25% above its minimum while train loss falls),
+  `plot_all_histories` (all runs in one figure), optional `target_acc` stop (records `stopped_by` in config.json).
+- `notebooks/04_training.ipynb` (Weeks 5-6): settings cell (versions, split types, models, per-model epochs,
+  patience, target accuracy), efficientnet_b0 smoke test, training loop with a summary line + health check per run,
+  combined curves (outputs/plots/week6/all_runs_curves.png), summary table. Executed end-to-end, 0 errors.
+
+### Protocol changes made during the week (to save time; decided by me)
+- efficientnet_b0 is GPU-bound (GPU 99%, CPU 12%, measured): ~4.7 min/epoch on the original split. Max epochs set
+  to 12 for efficientnet (cosine schedule built for 12, so LR still decays to 0).
+- v2 mobilenet max epochs 12 (only v2_original used it; v2_clean mobilenet had finished in Week 5 with 20).
+- Last 4 runs (v1_clean effnet, v2_original mobilenet + effnet, v2_clean effnet) stop as soon as val acc >= 0.92.
+  So their val scores are NOT comparable with the 4 runs that used normal early stopping (those reached 0.98-0.99).
+
+### Results (from the run outputs; validation only, test untouched)
+| Split | Model | Val acc | Val macro-F1 | Epochs (best) | Max ep. | Stopped by | Time min | Peak GPU MB | Float16 |
+|---|---|---|---|---|---|---|---|---|---|
+| v1_original | mobilenetv3_small_100 | 0.9918 | 0.9915 | 18 (13) | 20 | patience | 18.0 | 707 | yes |
+| v1_original | efficientnet_b0 | 0.9860 | 0.9856 | 9 (4) | 12 | patience | 44.5 | 2,237 | yes |
+| v1_clean | mobilenetv3_small_100 | 0.9808 | 0.9809 | 20 (18) | 20 | max epochs | 11.2 | 691 | yes |
+| v1_clean | efficientnet_b0 | 0.9423 | 0.9394 | 3 (3) | 12 | target 0.92 | 10.8 | 3,082 | NaN at epoch 1 -> float32 |
+| v2_original | mobilenetv3_small_100 | 0.9738 | 0.9736 | 4 (4) | 12 | target 0.92 | 5.3 | 707 | yes |
+| v2_original | efficientnet_b0 | 0.9750 | 0.9750 | 2 (2) | 12 | target 0.92 | 11.2 | 2,795 | NaN at epoch 1 -> float32 |
+| v2_clean | mobilenetv3_small_100 | 0.9683 | 0.9639 | 18 (13) | 20 | patience | 8.9 | 454 | yes |
+| v2_clean | efficientnet_b0 | 0.9479 | 0.9432 | 3 (3) | 12 | target 0.92 | 8.0 | 1,462 | yes |
+- With the same stopping rule, original > clean on validation (mobilenet v1: 0.9915 vs 0.9809). Expected: the
+  original split's val images come from the duplicate-filled Training folder. Test evaluation will show the real gap.
+- Overfitting: none flagged; train and val curves stay close in every run.
+- Epoch times: mobilenet ~52 s (original) / ~26 s (clean); efficientnet ~279 s (original) / ~143 s (clean, float16)
+  vs ~167-212 s (clean, float32).
+
+### Issues
+- **float16 NaN in 2 of 4 efficientnet runs**, both at epoch 1 (v1_clean, v2_original). The NaN guard switched those
+  runs to float32 and training continued with finite losses, so the results are valid, but those 2 runs were
+  slower (~1.2-1.5x) and used more GPU memory. Their time and memory numbers are not comparable with the float16 runs.
+  Not divergence (LR was still in warm-up, losses normal): same float16/cuDNN problem on this GTX 1650 Ti as Week 4.
+  It is random from run to run because cudnn.benchmark picks the convolution algorithm by timing each time.
+  Suggested fix (NOT applied, waiting for OK): train efficientnet_b0 always in float32 (per-model AMP setting).
+
+### Next step
+Decide on the float32 fix for efficientnet. Then evaluate every best.pt once on its test split (accuracy, macro-F1,
+confusion matrix) and compare original vs clean. Retrain the target-stopped runs with normal early stopping if
+their test scores are needed for the main comparison.
