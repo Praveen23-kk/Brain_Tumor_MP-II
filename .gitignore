@@ -1,0 +1,15 @@
+﻿# Dataset (read-only, large) - never commit
+data/
+# Generated outputs (checkpoints, figures, caches)
+outputs/
+# Virtual environment
+.venv/
+# Python / Jupyter clutter
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# pip temp folder (kept on D:)
+.piptmp/
+# downloaded archives (kept on D:)
+.downloads/
