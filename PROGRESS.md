@@ -142,3 +142,38 @@ from groups_T5 (whole groups in one split, stratified by class, seed 42).
 
 ### Next step
 Plan the training pipeline (smoke test of 1 epoch first) and train the light models on both splits.
+
+## Session 2026-10-10 (Week 5: training pipeline)
+### Done
+- `src/models.py`: the 6 timm models with per-model batch / image size / heavy flag, `build_model` (4 classes,
+  channels_last), `set_backbone_trainable` (heavy models: backbone frozen for 2 epochs), `count_params`.
+- `src/train.py`: `run(model, split_name, split_csv)` -> outputs/runs/<split>/<model>/{best.pt, history.csv, config.json}.
+  AdamW, 1 warm-up epoch + cosine LR (per step), label smoothing 0.1, inverse-frequency class weights (train part only),
+  AMP + channels_last, early stopping on val macro-F1 (patience 5, max 20), NaN guard (falls back to float32),
+  OOM retry (halve batch, double grad accumulation), skip finished runs, crash-safe file writes (temp file + rename),
+  `plot_history`. The test part of the splits is NOT used.
+- `notebooks/04_training.ipynb` executed (0 errors): smoke test, mobilenetv3_small_100 on v1_clean and v2_clean, curves.
+  Plots: outputs/plots/week5/curves_{v1,v2}_clean_mobilenetv3_small_100.png.
+
+### Results (from the run outputs; validation only)
+| Run | Epochs | Best epoch | Best val macro-F1 | Val acc (best) | Peak GPU MB | Train time s |
+|---|---|---|---|---|---|---|
+| v1_clean / mobilenetv3_small_100 | 20 | 18 | 0.9809 | 0.9808 | 690.9 | 674.7 |
+| v2_clean / mobilenetv3_small_100 | 18 (early stop) | 13 | 0.9639 | 0.9683 | 453.5 | 535.3 |
+- 1.52 M parameters, batch 48, no OOM, AMP never had to be switched off (float16 gave no NaN).
+- Smoke test (50 images, 1 epoch): all 3 files written, finite loss, second call skipped. 121 s, mostly one-off cost.
+- Steady epoch time 26-27 s. The first epoch costs 77-160 s: Windows worker start-up plus cuDNN benchmark
+  autotuning (30-90 s per new batch shape, measured) -> training loader uses drop_last.
+- Epoch 1-3 validation is low (v1 epoch 1: everything predicted as notumor). Checked: float16 = float32 predictions;
+  the cause is BatchNorm running statistics lagging behind fast-changing weights (same epoch-2 weights: 0.40 val acc
+  with running stats vs 0.85 with batch stats). It disappears by epoch 5.
+
+### Issues / notes
+- Hugging Face downloads failed (401) while `~/.cache/huggingface/token` (stale token) was used: timm must be imported
+  only via src.models, which points HF_HOME to D:/Brain-Tumor/.cache first.
+- The "lr_scheduler.step() before optimizer.step()" warning is harmless: GradScaler skips the very first step while it
+  calibrates its float16 scale.
+
+### Next step
+Train efficientnet_b0 and the heavy baselines on v1/v2 clean AND original splits (same pipeline), then evaluate
+every best.pt once on its test split (accuracy, macro-F1, confusion matrix) and compare original vs clean.
