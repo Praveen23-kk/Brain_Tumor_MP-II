@@ -90,3 +90,27 @@ Training/Testing) and the leakage-free split.
 - DataLoader, 500 images (pass 2 images/s): raw w0 124.7, raw w2 198.5, cached w0 205.4, cached w2 298.9.
   Worker start-up on Windows is about 30 s (pass 1). Cache speed-up 1.7x.
 - Decision: cached data + num_workers=2 + persistent_workers=True.
+
+## Session 2026-10-10 (Week 3: duplicate audit)
+### Done
+- `src/audit.py`: MD5 + 64-bit pHash, GPU pairwise Hamming (matrix product, 2,048-row chunks), check against
+  imagehash, pair table, threshold summary, test twins per class, union-find duplicate groups, plots.
+- `notebooks/02_duplicate_audit.ipynb` executed (0 errors). Results in outputs/audit/v1 and outputs/audit/v2.
+
+### Results (from the notebook run)
+- GPU check: 0 mismatches vs imagehash (1,000 pairs per version); a 304-image brute-force CPU check matched too.
+  v2: 25.9 M pairs in 0.065 s, peak VRAM 143 MB.
+- Exact (MD5) pairs: v1 503 (6,726 distinct of 7,023), v2 227 (7,013 distinct of 7,200).
+- Every pHash has exactly 32 one-bits, so distances are always even (T=3 = T=2, T=5 = T=4).
+- Test images with a Training twin: v1 41.7 / 55.2 / 87.3 %, v2 31.6 / 44.6 / 78.0 % at T = 3 / 5 / 8.
+- At T=5 per class (v1 | v2): glioma 22.7 | 21.5, meningioma 51.3 | 43.3, notumor 95.1 | 88.3, pituitary 38.0 | 25.5 %.
+- Label-conflict pairs: v1 2 / 33 / 1,850, v2 11 / 47 / 1,992 at T = 3 / 5 / 8.
+- Groups at T=5: v1 4,516 groups (542 span train and test), v2 4,755 (520 span). Saved as groups_T5.csv.
+
+### Decisions
+- Threshold T = 5. Train-test counts have a valley at d=4 (v1: 945, 707, 625, then 842, 1,580, 4,599),
+  pairs with d <= 4 look like the same image, d = 8 are different scans, and label conflicts explode at T = 8.
+
+### Next step
+Check the label-conflict pairs by eye, add the deep-feature look-alike check, then build the leakage-free split
+from groups_T5 (whole groups in one split, stratified by class, seed 42).
