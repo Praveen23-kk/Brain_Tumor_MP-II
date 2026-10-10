@@ -202,7 +202,7 @@ def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accu
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
     steps_per_epoch = math.ceil(len(train_loader) / accum)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, warmup_cosine(steps_per_epoch, epochs))
-    amp = AmpState(enabled=device == "cuda")
+    amp = AmpState(enabled=device == "cuda" and spec["amp"])     # float16 only if the model allows it
     if spec["heavy"]:
         set_backbone_trainable(model, False)
 
@@ -252,7 +252,7 @@ def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accu
         "max_epochs": epochs, "patience": patience, "target_acc": target_acc, "stopped_by": stopped_by,
         "epochs_run": len(history),
         "best_epoch": best_epoch, "best_val_macro_f1": best_f1,
-        "amp_disabled_at_epoch": amp.disabled_at_epoch,
+        "amp_at_start": device == "cuda" and spec["amp"], "amp_disabled_at_epoch": amp.disabled_at_epoch,
         "peak_gpu_mb": round(torch.cuda.max_memory_allocated() / 2**20, 1) if device == "cuda" else None,
         "train_time_s": round(time.perf_counter() - start, 1), "params": count_params(model),
         "seed": SEED, "torch": torch.__version__, "timm": TIMM_VERSION, "finished": True,

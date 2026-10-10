@@ -217,9 +217,13 @@ every best.pt once on its test split (accuracy, macro-F1, confusion matrix) and 
   slower (~1.2-1.5x) and used more GPU memory. Their time and memory numbers are not comparable with the float16 runs.
   Not divergence (LR was still in warm-up, losses normal): same float16/cuDNN problem on this GTX 1650 Ti as Week 4.
   It is random from run to run because cudnn.benchmark picks the convolution algorithm by timing each time.
-  Suggested fix (NOT applied, waiting for OK): train efficientnet_b0 always in float32 (per-model AMP setting).
+- Fix APPLIED (after this week's runs): per-model `amp` setting in `src/models.py`; efficientnet_b0 now always trains in
+  float32 (`amp_at_start` is recorded in config.json). Checked with a 50-image, 1-epoch run: no NaN, finite loss,
+  peak GPU 3,144 MB at batch 32 (close to the 4 GB limit; the OOM retry halves the batch if needed).
+  The 4 existing efficientnet runs were NOT retrained (my decision): 2 used float16 throughout, 2 switched to
+  float32 after epoch 1.
+- The 4 target-stopped runs were NOT retrained either (my decision).
 
 ### Next step
-Decide on the float32 fix for efficientnet. Then evaluate every best.pt once on its test split (accuracy, macro-F1,
-confusion matrix) and compare original vs clean. Retrain the target-stopped runs with normal early stopping if
-their test scores are needed for the main comparison.
+Evaluate every best.pt once on its test split (accuracy, macro-F1, confusion matrix) and compare original vs clean,
+keeping in mind which runs stopped at the 0.92 target.

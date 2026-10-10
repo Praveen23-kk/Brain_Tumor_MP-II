@@ -18,13 +18,15 @@ import torch   # noqa: E402
 # batch    = starting batch size (halved automatically on CUDA out-of-memory)
 # img_size = input size the network expects (inception_v3 was pre-trained on 299 x 299)
 # heavy    = big baseline: backbone frozen for the first FREEZE_EPOCHS epochs, smaller learning rate
+# amp      = train with mixed precision (float16). efficientnet_b0 is False: float16 gave NaN in epoch 1 in
+#            2 of its 4 Week 6 runs on this GTX 1650 Ti, so it always trains in float32 (no NaN, consistent runs).
 MODELS = {
-    "mobilenetv3_small_100": {"batch": 48, "img_size": 224, "heavy": False},
-    "efficientnet_b0":       {"batch": 32, "img_size": 224, "heavy": False},
-    "resnet50":              {"batch": 24, "img_size": 224, "heavy": True},
-    "inception_v3":          {"batch": 24, "img_size": 299, "heavy": True},
-    "densenet121":           {"batch": 16, "img_size": 224, "heavy": True},
-    "vgg16":                 {"batch": 16, "img_size": 224, "heavy": True},
+    "mobilenetv3_small_100": {"batch": 48, "img_size": 224, "heavy": False, "amp": True},
+    "efficientnet_b0":       {"batch": 32, "img_size": 224, "heavy": False, "amp": False},
+    "resnet50":              {"batch": 24, "img_size": 224, "heavy": True,  "amp": True},
+    "inception_v3":          {"batch": 24, "img_size": 299, "heavy": True,  "amp": True},
+    "densenet121":           {"batch": 16, "img_size": 224, "heavy": True,  "amp": True},
+    "vgg16":                 {"batch": 16, "img_size": 224, "heavy": True,  "amp": True},
 }
 TIMM_VERSION = timm.__version__
 FREEZE_EPOCHS = 2      # heavy models: train only the new classifier for this many epochs first
