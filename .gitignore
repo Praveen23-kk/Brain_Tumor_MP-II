@@ -13,3 +13,5 @@ __pycache__/
 .piptmp/
 # downloaded archives (kept on D:)
 .downloads/
+# model weights cache (kept on D:)
+.cache/

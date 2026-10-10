@@ -114,3 +114,31 @@ Training/Testing) and the leakage-free split.
 ### Next step
 Check the label-conflict pairs by eye, add the deep-feature look-alike check, then build the leakage-free split
 from groups_T5 (whole groups in one split, stratified by class, seed 42).
+
+## Session 2026-10-10 (Week 4: look-alikes, clusters, splits)
+### Done
+- `src/splits.py`: ResNet-50 features (float32, weights cached in D:/Brain-Tumor/.cache), GPU cosine pairs,
+  clusters (union-find over exact + pHash<=5 + cosine>=0.95), conflict report, original split, clean split
+  (with an assert that no cluster crosses splits), split summary, leak table, plots.
+- `src/audit.py`: union-find moved into a shared `union_find()` (same groups as before, checked).
+- `src/data.py`: `MRIDataset(split=None)` reads all rows.
+- `notebooks/03_splits.ipynb` executed (0 errors). Split CSVs: outputs/splits/{v1,v2}_split_{original,clean}.csv.
+
+### Results (from the notebook run)
+- Look-alike pairs (cos >= 0.95): v1 5,464, v2 5,024. Random-pair cosine: mean 0.63, 99th percentile 0.83.
+  All 8 eye-checked pairs at 0.95-0.96 (not found by pHash) are the same scan.
+- Clusters: v1 3,483 (largest 47 = 0.67%), v2 3,607 (largest 47). Conflict clusters: v1 17 (125 images), v2 24 (175).
+  They contain true label errors (same image, two classes) and chained different scans.
+- Test leakage, % of original Testing (exact / near / look-alike / any): v1 7.9 / 55.2 / 57.1 / 70.2,
+  v2 0.0 / 44.6 / 50.8 / 63.1. Clean split test: 0.0 for both.
+- Splits (train / val / test): v1 original 4,855 / 857 / 1,311; v1 clean 2,426 / 520 / 520;
+  v2 original 4,760 / 840 / 1,600; v2 clean 2,508 / 537 / 538.
+- The clean split is unbalanced: notumor about 11% (most notumor files are copies).
+
+### Issues / decisions
+- HARDWARE: AMP float16 on this GTX 1650 Ti gave NaN outputs (cuDNN) for batches of 48+ (resnet50).
+  Batches of 16 and 32 were fine. Training must check for NaN/Inf losses and fall back to float32 if needed.
+- The clean split needs class weights plus per-class / balanced metrics.
+
+### Next step
+Plan the training pipeline (smoke test of 1 epoch first) and train the light models on both splits.

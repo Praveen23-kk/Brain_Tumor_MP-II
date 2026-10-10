@@ -334,7 +334,9 @@ class MRIDataset(Dataset):
 
     def __init__(self, csv_path, split, transform=None, crop=False, size=IMG_SIZE):
         table = pd.read_csv(csv_path)
-        self.table = table[table["split"] == split].reset_index(drop=True)
+        if split is not None:                     # split=None keeps every row (used for feature extraction)
+            table = table[table["split"] == split]
+        self.table = table.reset_index(drop=True)
         self.transform = transform
         self.crop = crop
         self.size = size

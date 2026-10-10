@@ -170,21 +170,27 @@ def exact_pairs_check(hashes):
     return int((sizes * (sizes - 1) // 2).sum())
 
 
-def duplicate_groups(hashes, pairs, T=5):
-    """Union-find: images linked by a duplicate pair (distance <= T or exact) share a group_id.
-    Used later so all copies of an image go into the same split."""
-    parent = list(range(len(hashes)))
+def union_find(n, edges):
+    """Group n items (0..n-1) so that any two items linked by an edge, directly or through a chain
+    (A-B, B-C), end up in the same group. Returns a list: item -> group id (the group's root item)."""
+    parent = list(range(n))            # at the start every item is its own group
 
     def find(x):                       # follow parents to the group's root
         while parent[x] != x:
-            parent[x] = parent[parent[x]]
+            parent[x] = parent[parent[x]]   # path halving: keeps the chains short
             x = parent[x]
         return x
 
-    for a, b in zip(within(pairs, T)["a"], within(pairs, T)["b"]):
+    for a, b in edges:
         parent[find(a)] = find(b)      # join the two groups
+    return [find(x) for x in range(n)]
+
+
+def duplicate_groups(hashes, pairs, T=5):
+    """Images linked by a duplicate pair (distance <= T or exact) share a group_id."""
+    dup = within(pairs, T)
     out = hashes[["path", "label", "split"]].copy()
-    out["group_id"] = [find(x) for x in range(len(hashes))]
+    out["group_id"] = union_find(len(hashes), zip(dup["a"], dup["b"]))
     return out
 
 
