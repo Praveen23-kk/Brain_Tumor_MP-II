@@ -74,3 +74,19 @@ Plan (needs OK) for: src/ data utilities (seed, 224 px cache in outputs/), then 
 ### Next step
 Week 2: plan (needs OK) the duplicate audit on v1 (MD5 / pHash / deep-feature, within and across
 Training/Testing) and the leakage-free split.
+
+## Session 2026-10-10 (Week 2: preprocessing)
+### Done
+- `src/data.py`: brain_mask, crop_brain (Otsu + largest contour, 2% margin, fallback), pad_resize (pad to square,
+  no stretching), preprocess, make_index_csv, build_cache (resumable), train/eval transforms, denormalize,
+  MRIDataset (CSV path/label/split), time_loader, plots.
+- `notebooks/01_preprocessing.ipynb` executed end-to-end (0 errors). Plots in outputs/plots/week2/.
+- CSVs in outputs/splits/: v1_original, v2_original, v1_cache224, v2_cache224.
+
+### Results (from the notebook run)
+- Crop fallback: v1 10/7,023 (0.14%), v2 14/7,200 (0.19%); mostly notumor.
+- Cache: v1 181.1 MB, v2 185.7 MB (224x224 grey PNG).
+- Item: (3,224,224) float32, channels identical, mean -1.379 (black background, expected).
+- DataLoader, 500 images (pass 2 images/s): raw w0 124.7, raw w2 198.5, cached w0 205.4, cached w2 298.9.
+  Worker start-up on Windows is about 30 s (pass 1). Cache speed-up 1.7x.
+- Decision: cached data + num_workers=2 + persistent_workers=True.
