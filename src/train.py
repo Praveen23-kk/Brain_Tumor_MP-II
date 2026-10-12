@@ -187,9 +187,30 @@ def _is_finished(run_dir):
     return cfg.exists() and json.loads(cfg.read_text()).get("finished", False)
 
 
+def _save_last(path, model, optimizer, scheduler, amp, train_loader, epoch, history, best_f1, best_epoch,
+               bad_epochs, batch, accum, used_s, peak_mb, resumed_at, stopped_by):
+    """Week 7: everything needed to continue the run after `epoch` if the laptop stops (crash, power, Ctrl+C).
+    stopped_by is set if an early-stop rule fired at this epoch (then a resume must not train further).
+    Deleted by run() when the run finishes, so in the end only best.pt is kept."""
+    state = {
+        "epoch": epoch, "stopped_by": stopped_by,
+        "model": model.state_dict(), "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(), "scaler": amp.scaler.state_dict(),
+        "amp_enabled": amp.enabled, "amp_disabled_at_epoch": amp.disabled_at_epoch,
+        "history": history, "best_f1": best_f1, "best_epoch": best_epoch, "bad_epochs": bad_epochs,
+        "batch": batch, "accum": accum, "used_s": used_s, "peak_mb": peak_mb, "resumed_at": resumed_at,
+        # random-number states, so shuffling and dropout continue as if nothing had happened
+        "generator": train_loader.generator.get_state(), "python_rng": random.getstate(),
+        "numpy_rng": np.random.get_state(), "torch_rng": torch.get_rng_state(),
+        "cuda_rng": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }
+    _atomic(path, lambda f: torch.save(state, f))
+
+
 def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accum, device, target_acc=None):
     """One complete training attempt with a given batch / accumulation. Returns the config dict.
-    Raises torch.cuda.OutOfMemoryError if the GPU is too small for this batch (run() then retries)."""
+    Raises torch.cuda.OutOfMemoryError if the GPU is too small for this batch (run() then retries).
+    Week 7: if run_dir/last.pt exists (an interrupted run with the same batch), training continues after its epoch."""
     spec = MODELS[model_name]
     set_all_seeds()
     train_loader, val_loader, counts = make_loaders(split_csv, spec["img_size"], batch, subset)
@@ -207,9 +228,47 @@ def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accu
         set_backbone_trainable(model, False)
 
     history, best_f1, best_epoch, bad_epochs, stopped_by = [], -1.0, 0, 0, "max_epochs"
+    first_epoch, used_s, peak_before, resumed_at = 1, 0.0, 0.0, []
+    last_path = run_dir / "last.pt"
+    if last_path.exists():
+        # weights_only=False: the file also holds RNG states (not only tensors). Safe: we wrote it ourselves.
+        ck = torch.load(last_path, map_location="cpu", weights_only=False)
+        if ck["batch"] == batch and ck["accum"] == accum:
+            model.load_state_dict(ck["model"])
+            optimizer.load_state_dict(ck["optimizer"])
+            scheduler.load_state_dict(ck["scheduler"])
+            amp.enabled, amp.disabled_at_epoch = ck["amp_enabled"], ck["amp_disabled_at_epoch"]
+            amp.scaler = torch.amp.GradScaler("cuda", enabled=amp.enabled)
+            if amp.enabled:
+                amp.scaler.load_state_dict(ck["scaler"])
+            history, best_f1, best_epoch = ck["history"], ck["best_f1"], ck["best_epoch"]
+            bad_epochs, used_s, peak_before = ck["bad_epochs"], ck["used_s"], ck["peak_mb"]
+            # best.pt is the truth for the best epoch: if the laptop stopped between saving best.pt and
+            # last.pt, best.pt is one epoch newer than last.pt.
+            best_file = torch.load(run_dir / "best.pt", map_location="cpu", weights_only=False)
+            best_f1, best_epoch = best_file["val_macro_f1"], best_file["epoch"]
+            del best_file
+            train_loader.generator.set_state(ck["generator"])
+            random.setstate(ck["python_rng"])
+            np.random.set_state(ck["numpy_rng"])
+            torch.set_rng_state(ck["torch_rng"])
+            if ck["cuda_rng"] is not None:
+                torch.cuda.set_rng_state_all(ck["cuda_rng"])
+            first_epoch = ck["epoch"] + 1
+            resumed_at = ck["resumed_at"] + [first_epoch]
+            if ck["stopped_by"] is not None:          # it had already stopped early: do not train further
+                stopped_by, first_epoch = ck["stopped_by"], epochs + 1
+            # Not bit-identical to an uninterrupted run: the DataLoader workers start again with new
+            # augmentation seeds. Everything else (weights, optimizer, LR, shuffling) continues exactly.
+            print(f"  resuming from epoch {first_epoch} (last.pt found)")
+            if spec["heavy"] and first_epoch > FREEZE_EPOCHS:
+                set_backbone_trainable(model, True)
+                print("  backbone unfrozen")
+        del ck
+
     torch.cuda.reset_peak_memory_stats()
     start = time.perf_counter()
-    for epoch in range(1, epochs + 1):
+    for epoch in range(first_epoch, epochs + 1):
         if spec["heavy"] and epoch == FREEZE_EPOCHS + 1:
             set_backbone_trainable(model, True)
             print("  backbone unfrozen")
@@ -220,7 +279,8 @@ def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accu
         va_loss, va_acc, va_f1 = evaluate(model, val_loader, loss_fn, amp, epoch, device)
         history.append({"epoch": epoch, "lr": lr_now, "train_loss": tr_loss, "train_acc": tr_acc,
                         "val_loss": va_loss, "val_acc": va_acc, "val_macro_f1": va_f1,
-                        "seconds": round(time.perf_counter() - t0, 1), "batch": batch, "amp": amp.enabled})
+                        "seconds": round(time.perf_counter() - t0, 1), "batch": batch, "accum": accum,
+                        "amp": amp.enabled})
         _atomic(run_dir / "history.csv", lambda f: pd.DataFrame(history).to_csv(f, index=False))  # every epoch
         mark = ""
         if va_f1 > best_f1:                                  # new best -> save the weights
@@ -231,15 +291,22 @@ def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accu
         else:
             bad_epochs += 1
         print(f"  epoch {epoch:2d}  train loss {tr_loss:.4f} acc {tr_acc:.4f} | "
-              f"val loss {va_loss:.4f} acc {va_acc:.4f} F1 {va_f1:.4f} | {history[-1]['seconds']}s{mark}")
+              f"val loss {va_loss:.4f} acc {va_acc:.4f} F1 {va_f1:.4f} | {history[-1]['seconds']}s{mark}",
+              flush=True)
+        stop = None
         if bad_epochs >= patience:
             print(f"  early stop: no val macro-F1 gain for {patience} epochs")
-            stopped_by = "patience"
-            break
-        if target_acc is not None and va_acc >= target_acc:
+            stop = "patience"
+        elif target_acc is not None and va_acc >= target_acc:
             # Target reached: stop to save time. best.pt still holds the best-macro-F1 epoch so far.
             print(f"  target reached: val acc {va_acc:.4f} >= {target_acc}")
-            stopped_by = "target_acc"
+            stop = "target_acc"
+        peak_mb = max(peak_before, torch.cuda.max_memory_allocated() / 2**20 if device == "cuda" else 0.0)
+        _save_last(last_path, model, optimizer, scheduler, amp, train_loader, epoch, history, best_f1,
+                   best_epoch, bad_epochs, batch, accum, used_s + time.perf_counter() - start, peak_mb, resumed_at,
+                   stop)
+        if stop is not None:
+            stopped_by = stop
             break
 
     config = {
@@ -253,8 +320,10 @@ def _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accu
         "epochs_run": len(history),
         "best_epoch": best_epoch, "best_val_macro_f1": best_f1,
         "amp_at_start": device == "cuda" and spec["amp"], "amp_disabled_at_epoch": amp.disabled_at_epoch,
-        "peak_gpu_mb": round(torch.cuda.max_memory_allocated() / 2**20, 1) if device == "cuda" else None,
-        "train_time_s": round(time.perf_counter() - start, 1), "params": count_params(model),
+        "peak_gpu_mb": (round(max(peak_before, torch.cuda.max_memory_allocated() / 2**20), 1)
+                        if device == "cuda" else None),
+        "train_time_s": round(used_s + time.perf_counter() - start, 1), "params": count_params(model),
+        "resumed_at_epochs": resumed_at,
         "seed": SEED, "torch": torch.__version__, "timm": TIMM_VERSION, "finished": True,
     }
     del model, optimizer, train_loader, val_loader               # free GPU memory and worker processes
@@ -274,7 +343,13 @@ def run(model_name, split_name, split_csv, epochs=20, patience=5, subset=None, o
     run_dir.mkdir(parents=True, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     batch, accum = MODELS[model_name]["batch"], 1
-    print(f"training {split_name}/{model_name} (batch {batch}, device {device})")
+    last_path = run_dir / "last.pt"
+    if last_path.exists() and (run_dir / "history.csv").exists():
+        # Interrupted run: continue with the batch it was using (it may have been halved after an OOM).
+        last_row = pd.read_csv(run_dir / "history.csv").iloc[-1]
+        if "accum" in last_row:
+            batch, accum = int(last_row["batch"]), int(last_row["accum"])
+    print(f"training {split_name}/{model_name} (batch {batch} x {accum}, device {device})", flush=True)
     while True:
         try:
             config = _train(model_name, split_csv, run_dir, epochs, patience, subset, batch, accum, device,
@@ -285,8 +360,10 @@ def run(model_name, split_name, split_csv, epochs=20, patience=5, subset=None, o
                 raise
             batch, accum = batch // 2, accum * 2
             print(f"  CUDA out of memory -> restarting with batch {batch} x {accum} accumulation steps")
+            last_path.unlink(missing_ok=True)                # its batch no longer matches: start from epoch 1
         torch.cuda.empty_cache()                             # outside 'except' so the failed tensors are freed
     _atomic(run_dir / "config.json", lambda f: f.write_text(json.dumps(config, indent=2)))
+    last_path.unlink(missing_ok=True)                        # finished: keep only best.pt (CLAUDE.md rule)
     torch.cuda.empty_cache()
     return config
 
@@ -391,3 +468,136 @@ def plot_all_histories(run_dirs, out_path):
     fig.tight_layout()
     out_path = Path(out_path)
     return _save(fig, out_path.parent, out_path.name)
+
+
+# ---------------------------------------------------------------- Week 7: heavy models
+def probe(model_name, batch, steps=10, amp=None):
+    """Measure GPU memory and speed of one model BEFORE a long run (random images, not the dataset).
+    The backbone is UNFROZEN (worst case: gradients + AdamW state for every weight), same optimizer and
+    float16 setting as training. Returns a dict with peak GPU MB and seconds per batch for: full training,
+    frozen-backbone training (epochs 1-2 of heavy models) and evaluation; or {"oom": True} if it does not fit.
+    amp=None uses the model's own float16 setting; True/False overrides it (to compare float16 with float32)."""
+    spec = dict(MODELS[model_name])
+    if amp is not None:
+        spec["amp"] = amp
+    set_all_seeds()
+    device = "cuda"
+    result = {"model": model_name, "batch": batch, "img_size": spec["img_size"], "amp": spec["amp"]}
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    try:
+        model = build_model(model_name, num_classes=len(CLASSES)).to(device)
+        lr = LR_HEAVY if spec["heavy"] else LR_LIGHT
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
+        scaler = torch.amp.GradScaler("cuda", enabled=spec["amp"])
+        loss_fn = torch.nn.CrossEntropyLoss(label_smoothing=LABEL_SMOOTHING)
+        size = spec["img_size"]
+        images = torch.randn(batch, 3, size, size, device=device).to(memory_format=torch.channels_last)
+        labels = torch.randint(0, len(CLASSES), (batch,), device=device)
+
+        def train_step():
+            loss = loss_fn(_forward(model, images, spec["amp"]).float(), labels)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+
+        def timed(step):
+            """Seconds per call of step(): 2 warm-up calls (cuDNN autotuning), then the mean of `steps` calls."""
+            for _ in range(2):
+                step()
+            torch.cuda.synchronize()                    # the GPU works asynchronously: wait before timing
+            t0 = time.perf_counter()
+            for _ in range(steps):
+                step()
+            torch.cuda.synchronize()
+            return (time.perf_counter() - t0) / steps
+
+        model.train()
+        result["train_s_per_batch"] = round(timed(train_step), 4)          # full fine-tuning (worst memory)
+        result["peak_gpu_mb"] = round(torch.cuda.max_memory_allocated() / 2**20, 1)
+        result["reserved_gpu_mb"] = round(torch.cuda.max_memory_reserved() / 2**20, 1)
+        set_backbone_trainable(model, False)
+        result["frozen_s_per_batch"] = round(timed(train_step), 4)         # epochs 1-2 of heavy models
+        model.eval()
+
+        def eval_step():
+            with torch.no_grad():
+                _forward(model, images, spec["amp"])
+        result["eval_s_per_batch"] = round(timed(eval_step), 4)
+        result["oom"] = False
+    except torch.cuda.OutOfMemoryError:
+        result["oom"] = True
+    model = optimizer = images = None                    # free everything before the next probe
+    torch.cuda.empty_cache()
+    return result
+
+
+def estimate_minutes(p, n_train, n_val, epochs, frozen_epochs=FREEZE_EPOCHS, accum=1):
+    """Estimated training minutes for `epochs` epochs from a probe() result p.
+    Per epoch: train batches x seconds per batch + val batches x seconds per eval batch.
+    The first frozen_epochs epochs use the faster frozen-backbone time. Data loading is assumed to keep up
+    (it did for the GPU-bound efficientnet in Week 6); the one-off first-epoch overhead is NOT included."""
+    train_batches = n_train // p["batch"]                 # drop_last=True in make_loaders
+    val_batches = math.ceil(n_val / p["batch"])
+    val_s = val_batches * p["eval_s_per_batch"]
+    frozen = min(epochs, frozen_epochs)
+    seconds = (frozen * (train_batches * p["frozen_s_per_batch"] + val_s)
+               + (epochs - frozen) * (train_batches * p["train_s_per_batch"] + val_s))
+    return seconds / 60
+
+
+def runs_table(runs_root="outputs/runs"):
+    """One row per finished full run (smoke tests and subsets left out), read from config.json + history.csv."""
+    rows = []
+    for cfg_path in sorted(Path(runs_root).glob("*/*/config.json")):
+        cfg = json.loads(cfg_path.read_text())
+        if cfg.get("subset") is not None or not cfg.get("finished"):
+            continue
+        s = run_summary(cfg_path.parent)
+        if not cfg.get("amp_at_start", True):
+            fp16 = "no (float32)"
+        elif cfg.get("amp_disabled_at_epoch") is not None:
+            fp16 = f"NaN at epoch {cfg['amp_disabled_at_epoch']} -> float32"
+        else:
+            fp16 = "yes"
+        rows.append({"split": s["split"], "model": s["model"], "params_M": round(cfg["params"] / 1e6, 2),
+                     "val_acc": s["val_acc"], "val_macro_f1": s["val_macro_f1"],
+                     "epochs (best)": f"{s['epochs_run']} ({s['best_epoch']})", "max_epochs": cfg["max_epochs"],
+                     # Week 5 configs have no "stopped_by"; they had no target, so it was patience or max epochs
+                     "stopped_by": cfg.get("stopped_by") or ("max_epochs" if cfg["epochs_run"] == cfg["max_epochs"]
+                                                             else "patience"),
+                     "target_acc": cfg.get("target_acc") or "-",
+                     "batch x accum": f"{cfg['batch']} x {cfg['accum_steps']}",
+                     "time_min": s["train_time_min"], "peak_gpu_mb": s["peak_gpu_mb"], "float16": fp16,
+                     "resumed": len(cfg.get("resumed_at_epochs", [])) > 0})
+    return pd.DataFrame(rows)
+
+
+def to_markdown(df):
+    """A DataFrame as a Markdown table (for PROGRESS.md; avoids needing the 'tabulate' package)."""
+    lines = ["| " + " | ".join(df.columns) + " |", "|" + "---|" * len(df.columns)]
+    lines += ["| " + " | ".join(str(v) for v in row) + " |" for row in df.itertuples(index=False)]
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    # Week 7: train one run from the command line (so long runs can go in the background), e.g.
+    #   python -u -m src.train vgg16 v1_clean --epochs 12 --target-acc 0.92
+    # Run it again after a crash: it continues from last.pt.
+    import argparse
+    parser = argparse.ArgumentParser(description="Train one model on one split.")
+    parser.add_argument("model", choices=list(MODELS))
+    parser.add_argument("split", help="e.g. v1_clean -> outputs/splits/v1_split_clean.csv")
+    parser.add_argument("--split-csv", default=None, help="explicit split CSV (needed for 'smoke')")
+    parser.add_argument("--epochs", type=int, default=12)
+    parser.add_argument("--patience", type=int, default=5)
+    parser.add_argument("--target-acc", type=float, default=None)
+    parser.add_argument("--subset", type=int, default=None)
+    args = parser.parse_args()
+    version, split_type = (args.split.split("_", 1) + [""])[:2]
+    csv = args.split_csv or f"outputs/splits/{version}_split_{split_type}.csv"
+    cfg = run(args.model, args.split, csv, epochs=args.epochs, patience=args.patience, subset=args.subset,
+              target_acc=args.target_acc)
+    print(json.dumps({k: cfg[k] for k in ("best_epoch", "best_val_macro_f1", "stopped_by", "epochs_run",
+                                          "train_time_s", "peak_gpu_mb")}))
