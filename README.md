@@ -38,12 +38,15 @@ src/
   splits.py    ResNet-50 look-alike features, duplicate clusters, original split and leakage-free clean split
   models.py    the 6 timm models with per-model batch size, image size and precision settings
   train.py     training pipeline (one run per model x split), run summaries, health checks, plots
+  evaluate.py  test evaluation: metrics, temperature scaling, ECE, MC dropout, referral rule, latency
 notebooks/
   00_data_check.ipynb       counts, versions, corrupt files, image sizes and colour modes
   01_preprocessing.ipynb    crop/resize cache, augmentation, DataLoader speed
   02_duplicate_audit.ipynb  exact and near duplicates, train-test leakage
   03_splits.ipynb           look-alikes, clusters, original and clean splits
   04_training.ipynb         training of all models (settings cell at the top)
+  05_heavy_training.ipynb   resnet50 and vgg16 baselines
+  06_evaluation.ipynb       test metrics, calibration, MC dropout, referral, size and latency
 PROGRESS.md                 week-by-week log of what was done and every result
 outputs/                    generated: cache, audit files, splits, runs, plots (not in git)
 ```
@@ -55,7 +58,7 @@ python -m venv .venv
 .venv\Scripts\activate          # Windows
 pip install -r requirements.txt  # PyTorch 2.14.1 + CUDA 12.6, timm 1.0.30, ...
 ```
-Run the notebooks in order (00 to 04). Each one writes its results to `outputs/`. Pretrained weights are downloaded
+Run the notebooks in order (00 to 06). Each one writes its results to `outputs/`. Pretrained weights are downloaded
 once into `.cache/` inside the project.
 
 ## Training recipe (`src/train.py`)
