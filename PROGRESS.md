@@ -391,3 +391,83 @@ Efficiency (mean of the runs of each model; latency is nearly the same for every
 ### Next step
 Week 9: Grad-CAM with the inside-brain ratio on correct and wrong test scans. Possible follow-ups: retrain the early-stopped
 heavy runs with an equal budget for a fair original-vs-clean comparison, and score the original-trained models on the clean test set.
+
+## Session 2026-10-13 (Week 9: Grad-CAM inside-brain ratio, final figures)
+### Done
+- `src/gradcam.py`: Grad-CAM of the PREDICTED class for every test image (pytorch-grad-cam 1.5.7, float32, target layer = last
+  7 x 7 spatial layer: MobileNetV3 `blocks[-1]`, EfficientNet `bn2`, ResNet-50 `layer4[-1]`, VGG16 `features[-1]`). Brain mask =
+  Otsu -> largest connected component -> fill holes. Inside-brain ratio = heat inside the mask / all heat, also compared with the
+  chance level (mask share of the picture). 11,600 images over the 12 runs, no NaN, Grad-CAM class = Week-8 prediction for every image,
+  per-run row counts and accuracy equal the Week-8 values. Per-run CSVs in `outputs/gradcam/`, all in `outputs/results/week9_gradcam.csv`.
+- `notebooks/07_gradcam.ipynb` (named 07, not 06: `06_evaluation` exists): mask check, smoke test, tables per run / class / correct vs wrong,
+  sensitivity table without flagged masks, galleries of 12 random test images (6 wrong) for MobileNetV3-S, ResNet-50 and VGG16.
+- `src/report.py` + `notebooks/08_results_plots.ipynb`: the six final figures in `outputs/plots/final/` (150 dpi, Okabe-Ito palette,
+  hollow/filled markers and hatches so colour is never the only cue): 1 original vs clean, 2 size vs macro-F1 (log x), 3 per-class sensitivity,
+  4 ECE before/after, 5 inside-brain ratio per model, 6 leakage per dataset version. The plain-English summary is saved in
+  `outputs/results/week9_summary.md`. Both notebooks executed with nbclient (0 errors).
+
+### Results (from `outputs/results/week9_gradcam.csv`; chance = average mask share of the picture)
+| run | n | ratio_mean | ratio_median | chance | over_chance_median | tiny_masks | empty_cams |
+|---|---|---|---|---|---|---|---|
+| v1_clean_efficientnet_b0 | 520 | 0.76 | 0.798 | 0.579 | 1.332 | 10 | 0 |
+| v1_clean_mobilenetv3_small_100 | 520 | 0.686 | 0.726 | 0.579 | 1.22 | 10 | 0 |
+| v1_clean_resnet50 | 520 | 0.899 | 0.934 | 0.579 | 1.543 | 10 | 0 |
+| v1_clean_vgg16 | 520 | 0.353 | 0.315 | 0.579 | 0.523 | 10 | 2 |
+| v1_original_efficientnet_b0 | 1311 | 0.701 | 0.822 | 0.572 | 1.347 | 33 | 0 |
+| v1_original_mobilenetv3_small_100 | 1311 | 0.638 | 0.657 | 0.572 | 1.145 | 33 | 0 |
+| v1_original_resnet50 | 1311 | 0.849 | 0.88 | 0.572 | 1.486 | 33 | 0 |
+| v1_original_vgg16 | 1311 | 0.531 | 0.534 | 0.572 | 0.906 | 33 | 0 |
+| v2_clean_efficientnet_b0 | 538 | 0.783 | 0.823 | 0.578 | 1.36 | 9 | 0 |
+| v2_clean_mobilenetv3_small_100 | 538 | 0.7 | 0.749 | 0.578 | 1.259 | 9 | 0 |
+| v2_original_efficientnet_b0 | 1600 | 0.652 | 0.736 | 0.575 | 1.233 | 38 | 0 |
+| v2_original_mobilenetv3_small_100 | 1600 | 0.749 | 0.782 | 0.575 | 1.295 | 38 | 0 |
+
+Correct vs wrong predictions (mean ratio; the wrong groups are small):
+| run | n_correct | ratio_mean_correct | n_wrong | ratio_mean_wrong |
+|---|---|---|---|---|
+| v1_clean_efficientnet_b0 | 496 | 0.762 | 24 | 0.73 |
+| v1_clean_mobilenetv3_small_100 | 509 | 0.686 | 11 | 0.717 |
+| v1_clean_resnet50 | 493 | 0.903 | 27 | 0.838 |
+| v1_clean_vgg16 | 482 | 0.353 | 38 | 0.355 |
+| v1_original_efficientnet_b0 | 1295 | 0.7 | 16 | 0.727 |
+| v1_original_mobilenetv3_small_100 | 1299 | 0.637 | 12 | 0.749 |
+| v1_original_resnet50 | 1160 | 0.854 | 151 | 0.805 |
+| v1_original_vgg16 | 1204 | 0.528 | 107 | 0.567 |
+| v2_clean_efficientnet_b0 | 493 | 0.786 | 45 | 0.756 |
+| v2_clean_mobilenetv3_small_100 | 510 | 0.705 | 28 | 0.616 |
+| v2_original_efficientnet_b0 | 1505 | 0.653 | 95 | 0.632 |
+| v2_original_mobilenetv3_small_100 | 1495 | 0.754 | 105 | 0.689 |
+
+### Decisions
+- Ratio uses heat INTENSITY (not a thresholded area); the chance level is shown next to it because the brain covers only about 58% of the picture.
+- Masks covering < 25% of the picture are flagged (`tiny_mask`, 267 of 11,600 images); removing them changes any per-run mean ratio by at most 0.015.
+- No retraining before the figures (my decision): figure 1 marks early-stopped runs with a star instead of fixing the unequal budgets.
+- Gallery images are drawn at random (seed 42), not hand-picked. No significance tests (small wrong-groups, simple code); n is always shown.
+
+### Plain-English summary (copied from `outputs/results/week9_summary.md`)
+Everything below is read from the tables and figures above. One seed per model, small test sets (clean split: 520 and 538 images, so one image is about 0.19 points), so differences of about one point should not be over-read.
+
+**1. Leakage in the original split is large (figure 6).** In the original Testing folder, 7.9% of the v1 test images (0% for v2) are exact copies of a training image, 55.2% (v1) and 44.6% (v2) have a near-duplicate in training, and 70.2% (v1) and 63.1% (v2) belong to a cluster that also appears in training. After our clean split this is 0% by construction.
+
+**2. Our main hypothesis, "the clean split gives lower scores", is not confirmed by these runs (figure 1).** The original-split score is higher than the clean one in 3 of the 6 model-version pairs and lower in the other 3. The pairs are not comparable because training stopped early in most of them: for example ResNet-50 (3 epochs) and VGG16 (5 epochs, stopped by hand) on the original split scored *below* their clean runs (accuracy 0.885 vs 0.948 and 0.918 vs 0.927), which reflects under-training, not leakage. The only pair where both runs trained to patience or the epoch limit is v1 MobileNetV3-S: accuracy 0.9908 (original) vs 0.9788 (clean), macro-F1 0.9905 vs 0.9756, a drop of about 1.2 and 1.5 points. That is consistent with some inflation, but it is a single pair. A fair test needs equal training budgets, which we did not run.
+
+**3. Light models are not worse than the heavy baselines in our runs (figure 2).** On the v1 clean split the test macro-F1 is 0.9756 (MobileNetV3-S, 5.9 MB), 0.9541 (EfficientNet-B0, 15.6 MB), 0.9404 (ResNet-50, 90 MB) and 0.9169 (VGG16, 512 MB). The heavy runs also stopped early, so we cannot say they would not catch up with more training. What the numbers do show is the cost: VGG16 needed about 283 ms per image on this CPU against about 8 ms for MobileNetV3-S.
+
+**4. Weak spot by class (figure 3).** On the v1 clean split meningioma has the lowest sensitivity for all four models (0.957 MobileNetV3-S, 0.936 EfficientNet-B0, 0.922 ResNet-50, 0.879 VGG16). Notumor sensitivity is at least 0.917 for every model on that split, but note that it has only 60 test images.
+
+**5. Calibration (figure 4).** All 12 runs were under-confident (T between 0.45 and 0.73, likely a side effect of label smoothing). Temperature scaling lowered the ECE in every run, from 0.055-0.110 to 0.006-0.039. Referring scans below 0.70 confidence sent 0.3-12% of scans to a radiologist, and accuracy on the scans not referred was higher than overall accuracy in all 12 runs.
+
+**6. Grad-CAM (figure 5).** The inside-brain ratio is highest for ResNet-50 (mean 0.899 on v1 clean), then EfficientNet-B0, then MobileNetV3-S, and lowest for VGG16 (0.353 on v1 clean, below the 0.58 a uniform heat map would give; its heat sits on the skull rim and picture borders). This ordering does not follow model size or accuracy, so the idea that lightweight models look at the brain more than heavy ones is not supported. The ratio did not separate correct from wrong predictions (wrong was lower in 7 of 12 runs and higher in 5, with only 11-151 wrong images per run). The "brain mask" is really a head-tissue mask (it includes skull and scalp and fails on very bright tumours), so a high ratio does not prove the model looks at the tumour.
+
+**What we can and cannot claim.** We can claim: the original split leaks heavily; temperature scaling fixes under-confidence in every run; the lightweight models match the heavy ones at a small fraction of the size and CPU time; and VGG16's Grad-CAM heat lies more on the picture edge than on the brain (a warning sign; we did not test causally whether it relies on the background). We cannot claim: that leakage inflates accuracy by a specific amount (only one fair pair), that heavy models are worse in general (they stopped early), or that Grad-CAM proves what any network uses.
+
+
+### Issues
+- The "brain mask" is really a head-tissue mask (skull, scalp, neck included) and keeps only the tumour on very bright images; so a high ratio is not proof of looking at the tumour.
+- The 7 x 7 Grad-CAM map is coarse. VGG16's low ratio (heat on skull rim / picture borders) was seen on a second layer (14 x 14, 16 images) but not tested causally.
+- Original vs clean (figure 1) is confounded by early stopping; only v1 MobileNetV3-S is a fair pair. Single seed.
+- A first smoke-test script hung on Windows because it had no `if __name__ == "__main__"` guard (DataLoader workers re-import the script); fixed in the script, not in `src/`.
+
+### Next step
+Write the report with these figures. Optional follow-ups: equal-budget retraining of the early-stopped runs (the only way to get a fair
+leakage estimate), a causal check of VGG16 (mask out the background and re-score), densenet121 / inception_v3 which have no runs yet.

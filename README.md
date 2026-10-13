@@ -39,6 +39,8 @@ src/
   models.py    the 6 timm models with per-model batch size, image size and precision settings
   train.py     training pipeline (one run per model x split), run summaries, health checks, plots
   evaluate.py  test evaluation: metrics, temperature scaling, ECE, MC dropout, referral rule, latency
+  gradcam.py   Grad-CAM of the predicted class, brain mask (Otsu + largest blob + filled holes), inside-brain ratio
+  report.py    the six final report figures (colour-blind-safe palette)
 notebooks/
   00_data_check.ipynb       counts, versions, corrupt files, image sizes and colour modes
   01_preprocessing.ipynb    crop/resize cache, augmentation, DataLoader speed
@@ -47,6 +49,8 @@ notebooks/
   04_training.ipynb         training of all models (settings cell at the top)
   05_heavy_training.ipynb   resnet50 and vgg16 baselines
   06_evaluation.ipynb       test metrics, calibration, MC dropout, referral, size and latency
+  07_gradcam.ipynb          Grad-CAM on every test image, inside-brain ratio, galleries
+  08_results_plots.ipynb    final figures (outputs/plots/final) and plain-English summary
 PROGRESS.md                 week-by-week log of what was done and every result
 outputs/                    generated: cache, audit files, splits, runs, plots (not in git)
 ```
@@ -58,7 +62,7 @@ python -m venv .venv
 .venv\Scripts\activate          # Windows
 pip install -r requirements.txt  # PyTorch 2.14.1 + CUDA 12.6, timm 1.0.30, ...
 ```
-Run the notebooks in order (00 to 06). Each one writes its results to `outputs/`. Pretrained weights are downloaded
+Run the notebooks in order (00 to 08). Each one writes its results to `outputs/`. Pretrained weights are downloaded
 once into `.cache/` inside the project.
 
 ## Training recipe (`src/train.py`)
@@ -108,7 +112,7 @@ evaluation, which comes next.
 - [x] Week 4: look-alike audit, clusters, original and clean splits
 - [x] Week 5: training pipeline
 - [x] Week 6: light models on original and clean splits
-- [ ] Test-set evaluation, original vs clean
-- [ ] Heavy baselines; parameters, size and CPU ms/image
-- [ ] Grad-CAM and inside-brain ratio
-- [ ] Temperature scaling, ECE, MC dropout, referral flag
+- [x] Week 7: heavy baselines resnet50 and vgg16 on v1 (densenet121 and inception_v3 not trained)
+- [x] Week 8: test-set evaluation, parameters, size, CPU/GPU ms per image, temperature scaling, ECE, MC dropout, referral flag
+- [x] Week 9: Grad-CAM and inside-brain ratio, final figures, results summary
+- [ ] Fair original-vs-clean comparison (equal training budgets) and report writing
