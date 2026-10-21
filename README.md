@@ -57,9 +57,10 @@ notebooks/
   08_results_plots.ipynb    final figures (outputs/plots/final) and plain-English summary
 app/
   app.py            Streamlit demo (upload or sample MRI -> class, calibrated confidence, Grad-CAM, referral banner)
-  inference.py      CPU inference helpers that reuse src/ (preprocessing, load_run, temperature, Grad-CAM, referral rule)
+  inference.py      CPU inference helpers that reuse src/ (preprocessing, load_run, temperature, Grad-CAM, MC dropout, referral rule)
+  plots.py          matplotlib figures for the app tabs (colour-blind-safe palette)
   make_samples.py   copies the model files and one held-out sample per class into model/ and samples/
-  model/            best.pt, config.json, metrics.json of mobilenetv3_small_100 on the clean split (in git, 6 MB)
+  model/            best.pt, config.json, metrics.json, test_logits.npz of mobilenetv3_small_100 on the clean split (in git, 6 MB)
   samples/          four held-out test images, one per class
 PROGRESS.md                 week-by-week log of what was done and every result
 docs/images/                figures used in this README (copies of selected files from outputs/plots)
@@ -82,7 +83,11 @@ streamlit run app/app.py     # from the project root; runs on the CPU, no GPU ne
 ```
 Upload an MRI slice or click one of the four samples. The app shows the predicted class, the temperature-scaled
 confidence of all four classes, the Grad-CAM overlay with its inside-brain ratio, and a red "Refer to radiologist"
-banner when the confidence is below 0.70. It is a research prototype, not a medical device. The model is
+banner when the confidence is below 0.70. Six tabs give more detail: file facts and the preprocessing steps with a
+brightness histogram; a Grad-CAM explorer (any class, opacity slider, optional circle around the strongest heat region);
+temperature scaling and MC-dropout uncertainty; the model's test-set confusion matrix, per-class scores, reliability
+diagram, accuracy-vs-coverage and where the image's confidence falls among the test images; and general background text
+per class. The circle marks where the *model* looked, it is not a tumour outline. It is a research prototype, not a medical device. The model is
 `mobilenetv3_small_100` trained on the clean split; `app/model/` holds a copy of its files from `outputs/runs/`.
 
 ## Training recipe (`src/train.py`)

@@ -513,3 +513,39 @@ Inside-brain ratios of these four: 0.823, 0.828, 0.682, 0.946. Time on this lapt
 
 ### Next step
 Look at the page in a browser and try a real upload; then write the report. Optional: an out-of-distribution check (for example MC-dropout entropy or a simple "is this an MRI" filter), and the equal-budget retraining listed in Week 9.
+
+## Session 2026-10-21 (Week 10 follow-up: richer app tabs, plots, focus circle)
+
+### Done
+- `app/app.py` now has six tabs: Summary, Image details, Grad-CAM explorer, Uncertainty, Model performance, About the class.
+- `app/plots.py` (new): ten matplotlib figures (preprocessing strip, brightness histogram, calibrated vs raw probabilities, MC-dropout passes, Grad-CAM panels, confusion matrix, per-class scores, reliability diagram, accuracy-vs-coverage, test-set confidence histogram).
+- `app/inference.py` extended: `preprocess_steps` (also returns the crop box), `image_facts`, `intensity_stats`, `gradcam_maps`, `focus_circle`, `make_overlay`, `mc_passes`, `test_confidences`. `src/` was not changed.
+- `app/make_samples.py` also writes `app/model/test_logits.npz` (logits + labels of the 538 clean-test images, 13 KB).
+- Optional white circle on the Grad-CAM overlay (smallest circle around the largest blob where heat >= 50% of its maximum). Off by default for a "notumor" prediction.
+- Short generic text per class (typed by the team, labelled as general information, not model output).
+
+### Results (verification runs, CPU)
+| Check | Result |
+|---|---|
+| `preprocess_steps` final image vs cached training PNG, 4 samples | identical in 4 of 4 |
+| `mc_passes` vs `src.evaluate.mc_dropout` on the same image | max abs difference in probabilities 0.0, in entropy at most 4.9e-8 |
+| Accuracy recomputed from `test_logits.npz` | 0.947955 = `metrics.json` accuracy |
+| Confusion matrix total / reliability bin counts | 538 = n_test / 538 |
+| Empty (all-zero) heat map | `focus_circle` returns None |
+| Headless `AppTest`, 4 samples, each class in the explorer, circle off, slider | no exception, 6 tabs |
+| Server restart | `/_stcore/health` 200 |
+
+Focus circle (x, y, radius in px of 224 x 224) for the four samples: glioma (112, 12, 20), meningioma (93, 80, 31), notumor (180, 112, 20), pituitary (132, 64, 59). One click through the whole page took about 3-4 s in the headless test (all tabs are drawn at once).
+
+### Decisions
+- The circle is called the model's "focus region", never a tumour. The model has no tumour outlines to learn from, and the Grad-CAM map is 7 x 7 cells.
+- `mc_passes` repeats the seeded mask recipe of `src.evaluate.mc_dropout` inside the app instead of changing `src/`, because the plots need every pass and Week 8 numbers had to stay reproducible.
+- The test-set plots use only numbers saved by Week 8 (`metrics.json`, `test_logits.npz`).
+
+### Issues
+- The circle does not reliably sit on the tumour: for the glioma sample the strongest heat is at the top edge of the head (inside the head mask, which includes skull and scalp), nowhere near a tumour. This matches the Week 9 finding that a high inside-brain ratio does not prove the model looks at the tumour. The app warns when the circle's centre is outside the mask and always prints the caveat.
+- MC dropout is noisy here (std up to about 0.38 per class): the model was trained without dropout, so the MC mean is below the plain probability. The app says so.
+- Not yet looked at in a real browser with a real upload.
+
+### Next step
+Try uploads in the browser; then the report. If a real tumour location is wanted, it needs tumour masks or boxes (a segmentation or detection dataset), which this project does not have.
