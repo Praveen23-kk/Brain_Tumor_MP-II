@@ -55,6 +55,12 @@ notebooks/
   06_evaluation.ipynb       test metrics, calibration, MC dropout, referral, size and latency
   07_gradcam.ipynb          Grad-CAM on every test image, inside-brain ratio, galleries
   08_results_plots.ipynb    final figures (outputs/plots/final) and plain-English summary
+app/
+  app.py            Streamlit demo (upload or sample MRI -> class, calibrated confidence, Grad-CAM, referral banner)
+  inference.py      CPU inference helpers that reuse src/ (preprocessing, load_run, temperature, Grad-CAM, referral rule)
+  make_samples.py   copies the model files and one held-out sample per class into model/ and samples/
+  model/            best.pt, config.json, metrics.json of mobilenetv3_small_100 on the clean split (in git, 6 MB)
+  samples/          four held-out test images, one per class
 PROGRESS.md                 week-by-week log of what was done and every result
 docs/images/                figures used in this README (copies of selected files from outputs/plots)
 outputs/                    generated: cache, audit files, splits, runs, plots (not in git)
@@ -69,6 +75,15 @@ pip install -r requirements.txt  # PyTorch 2.14.1 + CUDA 12.6, timm 1.0.30, ...
 ```
 Run the notebooks in order (00 to 08). Each one writes its results to `outputs/`. Pretrained weights are downloaded
 once into `.cache/` inside the project.
+
+## Demo app (Week 10)
+```bash
+streamlit run app/app.py     # from the project root; runs on the CPU, no GPU needed
+```
+Upload an MRI slice or click one of the four samples. The app shows the predicted class, the temperature-scaled
+confidence of all four classes, the Grad-CAM overlay with its inside-brain ratio, and a red "Refer to radiologist"
+banner when the confidence is below 0.70. It is a research prototype, not a medical device. The model is
+`mobilenetv3_small_100` trained on the clean split; `app/model/` holds a copy of its files from `outputs/runs/`.
 
 ## Training recipe (`src/train.py`)
 - timm ImageNet-pretrained backbone with a new 4-class head, channels_last memory layout, seed 42
@@ -154,4 +169,5 @@ Example Grad-CAM galleries (v1 clean test set, 12 random images, half of them wr
 - [x] Week 7: heavy baselines resnet50 and vgg16 on v1 (densenet121 and inception_v3 not trained)
 - [x] Week 8: test-set evaluation, parameters, size, CPU/GPU ms per image, temperature scaling, ECE, MC dropout, referral flag
 - [x] Week 9: Grad-CAM and inside-brain ratio, final figures, results summary
+- [x] Week 10: Streamlit demo app in `app/`
 - [ ] Fair original-vs-clean comparison (equal training budgets) and report writing

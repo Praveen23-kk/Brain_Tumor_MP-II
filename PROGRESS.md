@@ -471,3 +471,45 @@ Everything below is read from the tables and figures above. One seed per model, 
 ### Next step
 Write the report with these figures. Optional follow-ups: equal-budget retraining of the early-stopped runs (the only way to get a fair
 leakage estimate), a causal check of VGG16 (mask out the background and re-score), densenet121 / inception_v3 which have no runs yet.
+
+## Session 2026-10-21 (Week 10: Streamlit demo app)
+
+### Done
+- Installed `streamlit` 1.66.0 into the venv and added it (with its 14 new dependencies) to `requirements.txt`; torch, numpy and pandas were not changed.
+- `app/inference.py`: CPU-only helpers that reuse `src/` (no Streamlit code): `src.data.crop_brain` + `pad_resize` + `eval_transforms` for preprocessing, `src.evaluate.load_run` / `softmax` / `REFER_BELOW`, `src.gradcam.make_cam` / `compute_cams` / `inside_mask` / `inside_ratio`. Class order, normalisation, image size and temperature are read from `config.json`.
+- `app/app.py`: page with disclaimer (top and sidebar), file uploader, 4 clickable samples, predicted class, calibrated confidence bars for all 4 classes, Grad-CAM overlay with brain-mask outline and inside-brain ratio, red "Refer to radiologist" banner when confidence < 0.70, and a warning when no head region is found.
+- `app/make_samples.py`: copies `best.pt`, `config.json`, `metrics.json` of `outputs/runs/v2_clean/mobilenetv3_small_100` into `app/model/` and the first clean-split test image of each class into `app/samples/` (`data/` only read).
+- README: layout, "Demo app" section, status line.
+
+### Results (all from the verification runs, CPU only, `CUDA_VISIBLE_DEVICES=""`)
+| Check | Result |
+|---|---|
+| App preprocessing vs cached training PNG, 4 samples | pixel-identical in 4 of 4 |
+| App probabilities vs `softmax(test_outputs.npz logits / T)` | max abs difference 7.2e-7 |
+| Headless `AppTest`, click each of the 4 samples | no exception; 4 progress bars each time |
+| `streamlit run app/app.py --server.headless true` | `/_stcore/health` and `/` returned HTTP 200 |
+
+| Sample (clean-split test row) | Source file | True | Predicted | Calibrated conf | Referred |
+|---|---|---|---|---|---|
+| glioma (row 6) | data/v2/Testing/glioma/Te-gl_45.jpg | glioma | glioma | 0.9671 | no |
+| meningioma (row 0) | data/v2/Training/meningioma/Tr-me_922.jpg | meningioma | glioma | 0.8742 | no |
+| notumor (row 1) | data/v2/Testing/notumor/Te-no_150.jpg | notumor | notumor | 0.6083 | yes (red banner) |
+| pituitary (row 2) | data/v2/Training/pituitary/Tr-pi_1129.jpg | pituitary | pituitary | 0.9929 | no |
+
+Inside-brain ratios of these four: 0.823, 0.828, 0.682, 0.946. Time on this laptop CPU (2 threads): about 11-23 ms for the prediction and 47-72 ms for Grad-CAM per image after warm-up; the first call took about 1.1 s and 1.0 s.
+
+### Decisions
+- Model = `mobilenetv3_small_100` on the clean split: best of the two light models there by accuracy, macro-F1 and ECE in `outputs/results/week8_results.csv` (efficientnet_b0 stopped early at the 0.92 val-accuracy target, so that gap is not an equal-budget comparison).
+- `best.pt` (6 MB) is committed under `app/model/` so the app runs from a fresh clone; `outputs/` stays out of git.
+- Samples are the first test row per class of `outputs/splits/v2_split_clean.csv`, not hand-picked. Two of them come from the original `Training/` folder because the clean split reshuffles images; they are still held-out for this model.
+- MC dropout is not in the app (not requested; the referral rule uses the temperature-scaled confidence as in Week 8).
+- A model lock around Grad-CAM, because the hooks sit on the model that Streamlit shares between sessions.
+
+### Issues
+- The model is confidently wrong on pictures that are not brain MRIs: a black image was classified pituitary at 0.952 and uniform noise notumor at 0.998, so neither was referred. Both trigger the "no clear head region" warning in the app (crop fallback), which is the only guard. The referral rule only catches uncertainty, not out-of-distribution input.
+- The meningioma sample is predicted as glioma at 0.874 confidence and is not referred (shown with "WRONG prediction" in the app).
+- Not tested: uploading a file through the browser widget (`AppTest` cannot upload) and looking at the page in a browser; only the sample path and the server start were run.
+- Single run on a 4 GB laptop: the Grad-CAM first-call delay is about 1 s.
+
+### Next step
+Look at the page in a browser and try a real upload; then write the report. Optional: an out-of-distribution check (for example MC-dropout entropy or a simple "is this an MRI" filter), and the equal-budget retraining listed in Week 9.

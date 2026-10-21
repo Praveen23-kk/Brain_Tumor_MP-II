@@ -1,8 +1,11 @@
 # PyTorch CUDA 12.6 builds come from the PyTorch package index:
 --extra-index-url https://download.pytorch.org/whl/cu126
+altair==6.3.0
 anyio==4.15.1
 asttokens==3.0.2
 attrs==26.1.0
+certifi==2026.10.19
+charset-normalizer==3.5.2
 click==8.5.0
 cloudpickle==3.1.2
 colorama==0.4.6
@@ -26,6 +29,7 @@ ImageHash==4.3.2
 ipykernel==7.4.0
 ipython==9.17.1
 ipython_pygments_lexers==1.1.1
+itsdangerous==2.2.0
 jedi==0.20.0
 Jinja2==3.1.6
 joblib==1.6.0
@@ -52,15 +56,20 @@ parso==0.8.7
 pillow==12.3.0
 platformdirs==4.12.4
 prompt_toolkit==3.0.53
+protobuf==7.36.2
 psutil==7.2.2
 pure_eval==0.2.4
+pyarrow==26.0.0
+pydeck==0.9.3
 Pygments==2.21.0
 pyparsing==3.3.3
 python-dateutil==2.9.0.post0
+python-multipart==0.0.32
 PyWavelets==1.10.0
 PyYAML==6.0.3
 pyzmq==27.2.0
 referencing==0.37.0
+requests==2.34.2
 rpds-py==2026.9.1
 safetensors==0.8.0
 scikit-learn==1.9.1
@@ -68,6 +77,8 @@ scipy==1.18.1
 setuptools==84.0.0
 six==1.17.0
 stack-data==0.6.3
+starlette==1.9.0
+streamlit==1.66.0
 sympy==1.14.0
 threadpoolctl==3.7.0
 timm==1.0.30
@@ -80,4 +91,8 @@ truststore==0.10.4
 ttach==0.0.3
 typing_extensions==4.16.0
 tzdata==2026.5
+urllib3==2.8.0
+uvicorn==0.54.0
+watchdog==6.0.0
 wcwidth==0.9.2
+websockets==17.3
