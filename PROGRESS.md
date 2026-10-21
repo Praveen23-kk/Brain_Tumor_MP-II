@@ -549,3 +549,19 @@ Focus circle (x, y, radius in px of 224 x 224) for the four samples: glioma (112
 
 ### Next step
 Try uploads in the browser; then the report. If a real tumour location is wanted, it needs tumour masks or boxes (a segmentation or detection dataset), which this project does not have.
+
+## Session 2026-10-21 (README: app screenshots and how it works)
+
+### Done
+- Took seven screenshots of the running app with headless Chrome (Playwright, installed outside the project and the venv) and saved them in `docs/images/app_1_start.png` ... `app_7_referral.png`.
+- README: "Demo app" section rewritten with the processing pipeline, one screenshot per tab, the referral banner and a list of known limits.
+- Fixes found while looking at the real browser view: metric values that were cut off ("no refe...", "0.091 -> 0...") now fit (ECE shows the value after scaling with the change versus before; labels shortened); the per-class and probability plots no longer have legends on top of bars; the two large histograms are no longer stretched to the full width.
+
+### Results
+- No new model numbers. The page was checked in a real browser engine for the first time: the server log had no errors and all tabs rendered for the glioma sample, and the Summary tab for the notumor sample showed the red referral banner.
+
+### Issues
+- Real file upload through the browser widget is still not tested (screenshots use the sample buttons).
+
+### Next step
+Try your own upload, then the report.

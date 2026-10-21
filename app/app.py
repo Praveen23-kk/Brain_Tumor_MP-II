@@ -166,7 +166,7 @@ with tab_img:
     c3.metric("Std (in mask)", f"{stats['std']:.1f}")
     c4.metric("Darkest (in mask)", stats["min"])
     c5.metric("Brightest (in mask)", stats["max"])
-    st.pyplot(plots.plot_histogram(grey, gm["mask"]), width="content")
+    st.pyplot(plots.plot_histogram(grey, gm["mask"]), width=600)
 
 # ------------------------------------------------------------------------------------ tab: Grad-CAM explorer
 with tab_cam:
@@ -207,7 +207,7 @@ with tab_unc:
         a, b_, c = st.columns(3)
         a.metric("Margin top-1 vs top-2", f"{result['margin']:.2f}")
         b_.metric("Entropy", f"{result['entropy']:.2f}", help=f"0 = sure, {np.log(len(classes)):.2f} = completely unsure (4 classes).")
-        c.metric("Referral rule", "refer" if result["refer"] else "no referral")
+        c.metric("Refer to radiologist?", "yes" if result["refer"] else "no")
         direction = "sharpens" if cfg["temperature"] < 1 else "softens"
         st.caption(f"The fitted temperature T = {cfg['temperature']:.3f} {direction} the probabilities (fitted on the validation set). "
                    "It never changes which class is predicted.")
@@ -217,7 +217,8 @@ with tab_unc:
         a, b_, c = st.columns(3)
         a.metric("MC prediction", classes[int(mc_mean.argmax())])
         b_.metric("MC entropy", f"{mc_entropy:.2f}")
-        c.metric("Agrees with plain prediction", "yes" if int(mc_mean.argmax()) == result["pred"] else "NO")
+        c.metric("Same as plain?", "yes" if int(mc_mean.argmax()) == result["pred"] else "NO",
+                 help="Does the MC-dropout mean predict the same class as the plain (no dropout) prediction?")
         st.caption("The model was trained without dropout, so single passes vary a lot and the MC mean is lower than the plain probability. "
                    "Look at the entropy and at whether the prediction stays the same, not at the exact numbers.")
 
@@ -233,7 +234,8 @@ with tab_perf:
         k1, k2, k3, k4, k5 = st.columns(5)
         k1.metric("Accuracy", f"{t['accuracy']:.1%}")
         k2.metric("Macro-F1", f"{t['macro_f1']:.3f}")
-        k3.metric("ECE before -> after", f"{cal['before']['ece']:.3f} -> {cal['after']['ece']:.3f}")
+        k3.metric("ECE after scaling", f"{cal['after']['ece']:.3f}", delta=f"{cal['after']['ece'] - cal['before']['ece']:.3f} vs before",
+                  delta_color="inverse", help="Expected calibration error: lower is better.")
         k4.metric("Referred (conf < 0.70)", f"{ref['rate']:.1%}", help=f"{ref['n_referred']} of {metrics['n_test']} images.")
         k5.metric("CPU time per image", f"{eff['cpu_ms']:.1f} ms")
         st.caption(f"Accuracy on the images that were not referred: {ref['acc_kept']:.1%}; on the referred ones: {ref['acc_referred']:.1%}.")
@@ -246,10 +248,10 @@ with tab_perf:
         test_conf = inference.test_confidences(bundle)
         if test_conf is not None:
             st.write("**Where does this image's confidence fall among the test images?**")
-            st.pyplot(plots.plot_confidence_hist(test_conf, result["conf"], REFER_BELOW), width="content")
+            st.pyplot(plots.plot_confidence_hist(test_conf, result["conf"], REFER_BELOW), width=700)
             below = float((test_conf["conf"] < result["conf"]).mean())
             st.caption(f"{below:.0%} of the test images got a lower confidence than this image. "
-                       "Wrong predictions (red) concentrate at lower confidence, which is why the 0.70 referral rule helps.")
+                       "Wrong predictions (orange) concentrate at lower confidence, which is why the 0.70 referral rule helps.")
 
 # ------------------------------------------------------------------------------------------ tab: about
 with tab_info:

@@ -65,7 +65,7 @@ def plot_probs_compare(raw, calibrated, classes, threshold):
     ax.set_xticks(pos, classes)
     ax.set_ylim(0, 1.12)
     ax.set_ylabel("probability")
-    ax.legend(fontsize=8, loc="upper left")
+    ax.legend(fontsize=8, loc="upper right")
     return fig
 
 
@@ -140,9 +140,9 @@ def plot_per_class(per_class, classes):
         ax.text(p - 0.2, s + 0.005, f"{s:.2f}", ha="center", fontsize=7)
         ax.text(p + 0.2, q + 0.005, f"{q:.2f}", ha="center", fontsize=7)
     ax.set_xticks(pos, classes)
-    ax.set_ylim(0.7, 1.04)                     # starts at 0.7 so the differences are visible; written in the label
+    ax.set_ylim(0.7, 1.1)                      # starts at 0.7 so the differences are visible; written in the label
     ax.set_ylabel("score (axis starts at 0.7)")
-    ax.legend(fontsize=8, loc="lower right")
+    ax.legend(fontsize=8, loc="upper center", ncol=2)
     return fig
 
 

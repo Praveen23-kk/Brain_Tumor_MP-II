@@ -81,14 +81,71 @@ once into `.cache/` inside the project.
 ```bash
 streamlit run app/app.py     # from the project root; runs on the CPU, no GPU needed
 ```
-Upload an MRI slice or click one of the four samples. The app shows the predicted class, the temperature-scaled
-confidence of all four classes, the Grad-CAM overlay with its inside-brain ratio, and a red "Refer to radiologist"
-banner when the confidence is below 0.70. Six tabs give more detail: file facts and the preprocessing steps with a
-brightness histogram; a Grad-CAM explorer (any class, opacity slider, optional circle around the strongest heat region);
-temperature scaling and MC-dropout uncertainty; the model's test-set confusion matrix, per-class scores, reliability
-diagram, accuracy-vs-coverage and where the image's confidence falls among the test images; and general background text
-per class. The circle marks where the *model* looked, it is not a tumour outline. It is a research prototype, not a medical device. The model is
-`mobilenetv3_small_100` trained on the clean split; `app/model/` holds a copy of its files from `outputs/runs/`.
+It opens at http://localhost:8501. The model is `mobilenetv3_small_100` trained on the clean split; `app/model/` holds a copy
+of its files from `outputs/runs/`. **It is a research prototype, not a medical device**: it must not be used for any clinical decision.
+
+### How it works
+```
+upload / sample  ->  greyscale -> crop black border -> pad to square -> resize 224   (same steps as the training cache)
+                 ->  MobileNetV3-small (CPU)  ->  logits
+                 ->  softmax(logits / T)       T = temperature fitted on the validation set (config.json)
+                 ->  confidence = highest probability;  below 0.70 -> red "Refer to radiologist" banner
+                 ->  Grad-CAM on the last 7 x 7 feature map  ->  heat map, inside-brain ratio, optional focus circle
+                 ->  MC dropout (30 passes on the last layer)  ->  uncertainty
+```
+All model code is reused from `src/` (`inference.py` is only a thin wrapper); `plots.py` draws the figures and `app.py` the page.
+Nothing is typed in by hand: every number on the page is computed for the uploaded image or read from `app/model/metrics.json`
+and `test_logits.npz`, which were written by the Week 8 evaluation.
+
+### Screens
+**1. Start: upload your own slice or click one of four held-out sample images** (never used in training or validation).
+The disclaimer is at the top of the page and in the sidebar.
+
+![App start screen](docs/images/app_1_start.png)
+
+**2. Summary tab.** Predicted class, calibrated confidence for all four classes, the image the network sees, and the Grad-CAM
+overlay (cyan line = brain mask). The inside-brain ratio is shown next to the share a uniform heat map would get.
+The optional white circle marks the strongest Grad-CAM region, that is **where the model looked, not a tumour outline**:
+the model was never trained with tumour outlines and the map is only 7 x 7 cells. In this glioma sample the strongest heat is at the
+top edge of the head, which is a good reminder not to read the circle as a tumour location.
+
+![Summary tab](docs/images/app_2_summary.png)
+
+**3. Referral banner.** When the calibrated confidence is below 0.70 the page shows a red "Refer to radiologist" banner
+(notumor sample, confidence below the threshold). The circle is off by default when the prediction is "notumor".
+
+![Referral banner](docs/images/app_7_referral.png)
+
+**4. Image details tab.** File facts, the four preprocessing steps (crop box, crop, padded 224 x 224 input, Otsu brain mask),
+brightness statistics inside the mask and a brightness histogram.
+
+![Image details tab](docs/images/app_3_image_details.png)
+
+**5. Grad-CAM explorer tab.** Choose any of the four classes to explain (not only the predicted one), change the heat-map
+opacity, and see the heat map alone next to the overlay. A warning appears if the focus region lies outside the brain mask.
+
+![Grad-CAM explorer tab](docs/images/app_4_gradcam.png)
+
+**6. Uncertainty tab.** Left: probabilities before and after temperature scaling with the 0.70 referral line, the margin between
+the top two classes and the entropy. Right: 30 MC-dropout passes (bar = mean, whisker = standard deviation, dots = single passes,
+diamond = plain prediction). The model was trained without dropout, so single passes vary a lot; look at whether the predicted class
+stays the same and at the entropy rather than at the exact numbers.
+
+![Uncertainty tab](docs/images/app_5_uncertainty.png)
+
+**7. Model performance tab.** How the model did on its own held-out clean test images (not on your upload): confusion matrix,
+sensitivity and precision per class, reliability diagram before and after temperature scaling, accuracy versus coverage,
+and where the uploaded image's confidence falls among the test images (wrong predictions sit at lower confidence).
+A last tab, "About the class", gives a short general description of the predicted class (background text written by the team, not model output).
+
+![Model performance tab](docs/images/app_6_performance.png)
+
+### Known limits
+- The model always answers with one of the four classes, also for a picture that is not a brain MRI. The only guard is a warning
+  when the crop step finds no clear head region; a black or noise image was still classified with high confidence in our tests.
+- Grad-CAM shows where the network looked, not what it understood; the brain mask is really a head mask (it includes skull and scalp).
+- One model, one seed, one public dataset (Kaggle, Nickparvar), clean-split test set of 538 images.
+- The screenshots were taken from the running app with headless Chrome and show the held-out sample images.
 
 ## Training recipe (`src/train.py`)
 - timm ImageNet-pretrained backbone with a new 4-class head, channels_last memory layout, seed 42
